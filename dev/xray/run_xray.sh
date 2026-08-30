@@ -9,15 +9,25 @@ OUT="${4:-xray_runtime}"
 CC="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '.')"
 NVCC="${NVCC:-nvcc}"
 
-printf '[xray] building probe for sm_%s\n' "$CC"
+printf '[xray] building runtime probe for sm_%s\n' "$CC"
 "$NVCC" --threads=0 --use_fast_math -std=c++17 -O3 \
   --generate-code "arch=compute_${CC},code=sm_${CC}" \
   -I. dev/xray/runtime_probe.cu \
   -lcublas -lcublasLt \
   -o xray_runtime_probe
 
-printf '[xray] direct probe: B=%s T=%s steps=%s\n' "$B" "$T" "$STEPS"
+printf '[xray] building matmul probe for sm_%s\n' "$CC"
+"$NVCC" --threads=0 --use_fast_math -std=c++17 -O3 \
+  --generate-code "arch=compute_${CC},code=sm_${CC}" \
+  -I. dev/xray/matmul_probe.cu \
+  -lcublas -lcublasLt \
+  -o xray_matmul_probe
+
+printf '[xray] direct runtime probe: B=%s T=%s steps=%s\n' "$B" "$T" "$STEPS"
 ./xray_runtime_probe "$B" "$T" "$STEPS"
+
+printf '\n[xray] forward GEMM discovery: custom kernel vs cuBLAS TF32/FP32\n'
+./xray_matmul_probe "$B" "$T"
 
 if command -v nsys >/dev/null 2>&1; then
   printf '\n[xray] capturing CUDA/cuBLAS/NVTX timeline with Nsight Systems\n'
