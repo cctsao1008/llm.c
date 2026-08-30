@@ -28,14 +28,17 @@ if command -v nsys >/dev/null 2>&1; then
     -o "$OUT" \
     ./xray_runtime_probe "$B" "$T" "$STEPS"
 
+  # nsys stats caches an SQLite export next to the .nsys-rep. Because this
+  # script intentionally overwrites the same report name across experiments,
+  # always regenerate the export or later reports can fail/stale-read it.
   printf '\n[xray] CUDA kernel summary\n'
-  nsys stats --report cuda_gpu_kern_sum "${OUT}.nsys-rep" || true
+  nsys stats --force-export=true --report cuda_gpu_kern_sum "${OUT}.nsys-rep" || true
 
   printf '\n[xray] CUDA API summary\n'
-  nsys stats --report cuda_api_sum "${OUT}.nsys-rep" || true
+  nsys stats --force-export=true --report cuda_api_sum "${OUT}.nsys-rep" || true
 
   printf '\n[xray] CUDA memory operation summary\n'
-  nsys stats --report cuda_gpu_mem_time_sum "${OUT}.nsys-rep" || true
+  nsys stats --force-export=true --report cuda_gpu_mem_time_sum "${OUT}.nsys-rep" || true
 else
   printf '[xray] nsys not found; phase probe completed, timeline capture skipped\n'
 fi
