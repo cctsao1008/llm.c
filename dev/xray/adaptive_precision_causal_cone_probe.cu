@@ -10,7 +10,7 @@
 #include <vector>
 
 static void xray_repair_l00_rows(GPT2* model,
-                                 const float* l00_residual2,
+                                 float* l00_residual2,
                                  const float* l00_gelu,
                                  float* patched_l00,
                                  int first_token, int last_token,
