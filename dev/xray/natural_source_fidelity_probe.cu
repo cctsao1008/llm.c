@@ -80,14 +80,14 @@ int main(int argc, char** argv) {
     ParameterTensors p = model.params;
     ActivationTensors a = model.acts;
     size_t BTC = (size_t)B * T * C;
-    const float* residual = a.residual3 + (size_t)(selected_layer - 1) * BTC;
+    float* residual = a.residual3 + (size_t)(selected_layer - 1) * BTC;
     float* ln1 = a.ln1 + (size_t)selected_layer * BTC;
     float* ln1_mean = a.ln1_mean + (size_t)selected_layer * B * T;
     float* ln1_rstd = a.ln1_rstd + (size_t)selected_layer * B * T;
-    const float* ln1w = p.ln1w + selected_layer * C;
-    const float* ln1b = p.ln1b + selected_layer * C;
-    const float* qkvw = p.qkvw + (size_t)selected_layer * 3 * C * C;
-    const float* qkvb = p.qkvb + (size_t)selected_layer * 3 * C;
+    float* ln1w = p.ln1w + selected_layer * C;
+    float* ln1b = p.ln1b + selected_layer * C;
+    float* qkvw = p.qkvw + (size_t)selected_layer * 3 * C * C;
+    float* qkvb = p.qkvb + (size_t)selected_layer * 3 * C;
 
     layernorm_forward(ln1, ln1_mean, ln1_rstd, residual, ln1w, ln1b, B, T, C);
 
