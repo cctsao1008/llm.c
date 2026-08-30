@@ -1,6 +1,9 @@
+#pragma push_macro("main")
+#undef main
 #define main xray_natural_linearity_embedded_main
 #include "natural_perturbation_linearity_probe.cu"
 #undef main
+#pragma pop_macro("main")
 
 #include <cmath>
 #include <cstdio>
