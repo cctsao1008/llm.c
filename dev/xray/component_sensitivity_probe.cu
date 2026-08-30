@@ -1,6 +1,6 @@
-#define main xray_layer_sensitivity_embedded_main
+#define XRAY_LAYER_SENSITIVITY_EMBEDDED
 #include "layer_sensitivity_probe.cu"
-#undef main
+#undef XRAY_LAYER_SENSITIVITY_EMBEDDED
 
 #include <algorithm>
 #include <cmath>
