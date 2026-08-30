@@ -18,7 +18,7 @@ __global__ void xray_blend_residual(float* out, const float* ref, const float* c
     if (i < n) out[i] = ref[i] + alpha * (cur[i] - ref[i]);
 }
 
-static void xray_forward_from_residual3(GPT2* model, const float* checkpoint,
+static void xray_forward_from_residual3(GPT2* model, float* checkpoint,
                                         int checkpoint_layer, int B, int T) {
     const int Vp = model->config.padded_vocab_size;
     const int L = model->config.num_layers;
@@ -30,7 +30,7 @@ static void xray_forward_from_residual3(GPT2* model, const float* checkpoint,
     ActivationTensors acts = model->acts;
 
     for (int l = checkpoint_layer + 1; l < L; ++l) {
-        const float* residual = (l == checkpoint_layer + 1)
+        float* residual = (l == checkpoint_layer + 1)
             ? checkpoint
             : acts.residual3 + (size_t)(l - 1) * BTC;
 
@@ -78,7 +78,7 @@ static void xray_forward_from_residual3(GPT2* model, const float* checkpoint,
         residual_forward(l_residual3, l_residual2, l_fcproj, B * T * C);
     }
 
-    const float* final_residual = checkpoint_layer == L - 1
+    float* final_residual = checkpoint_layer == L - 1
         ? checkpoint
         : acts.residual3 + (size_t)(L - 1) * BTC;
     layernorm_forward(acts.lnf, acts.lnf_mean, acts.lnf_rstd,
