@@ -1,60 +1,50 @@
 # llm.c runtime x-ray
 
-This directory contains experimental observability tooling for looking at the runtime behavior of `llm.c` without changing model math, kernels, optimizer behavior, or training results.
+This branch is not for re-measuring facts already visible in normal `llm.c` output. It is for instrumenting execution paths that are otherwise hidden by the high-level model view.
 
-The first tool, `runtime_anatomy.py`, launches an existing llm.c executable, mirrors its stdout, samples NVIDIA GPU telemetry through `nvidia-smi`, parses the allocation and iteration data already emitted by the program, and prints a compact summary after the run.
+The probe deliberately asks questions whose answers are not obvious from parameter counts, tensor shapes, or the existing training log:
 
-## Why this exists
+- Where does steady-state GPU time actually go: forward, zero-grad, backward, or AdamW?
+- How different is the cold path from steady state?
+- Does CUDA/cuBLAS lazily allocate device memory behind the model's own allocations?
+- How large is the wall-time vs GPU-time gap for each semantic phase?
+- Which actual CUDA kernels and cuBLAS calls dominate the timeline?
+- Are memory operations or API overhead unexpectedly significant?
 
-High-level model descriptions hide much of the machine behavior that determines whether a model is practical: activation footprint, optimizer state, peak device memory, latency distribution, GPU utilization, and transient slowdowns. The x-ray tooling is intended to make those properties visible before we modify the implementation itself.
+`runtime_probe.cu` includes the existing FP32 implementation under `TESTING`, so the original training source remains untouched. It drives the same `GPT2` functions directly, adds CUDA-event timing, `cudaMemGetInfo()` snapshots, and NVTX semantic ranges, then exposes the run to Nsight Systems.
 
-The initial rule is deliberately strict:
+## Run it
 
-> Observe first. Do not change the model or training behavior just to make it easier to measure.
-
-## Quick start
-
-Build the existing single-GPU FP32 target as usual:
-
-```bash
-make train_gpt2fp32cu
-```
-
-Then run it through the x-ray harness:
+From the repository root:
 
 ```bash
-python3 dev/xray/runtime_anatomy.py -- \
-  ./train_gpt2fp32cu -b 4 -t 512 -v 1000 -s 1000
+chmod +x dev/xray/run_xray.sh
+./dev/xray/run_xray.sh 4 512 5
 ```
 
-The training program's normal output is preserved. At the end, an additional `[xray]` report is printed with information such as:
+Arguments are:
 
 ```text
-[xray] reported allocations  : 4251 MiB
-[xray] step latency mean     : ... ms
-[xray] step latency p50      : ... ms
-[xray] step latency p95      : ... ms
-[xray] throughput mean       : ... tok/s
-[xray] peak GPU memory       : ... MiB
-[xray] GPU util mean / peak  : ...
-[xray] GPU temp peak         : ... C
+B T STEPS [OUTPUT_BASENAME]
 ```
 
-GPU telemetry is observational. A failed `nvidia-smi` sample does not fail or alter the child training process.
+The script builds `xray_runtime_probe`, runs the internal phase probe once, then — when `nsys` is available — captures a CUDA/cuBLAS/NVTX timeline and prints kernel, CUDA API, and GPU-memory-operation summaries.
 
-## Sampling interval
+Typical output begins with memory snapshots around the cold path:
 
-The default GPU sampling interval is 250 ms. It can be changed with:
-
-```bash
-python3 dev/xray/runtime_anatomy.py --sample-ms 100 -- \
-  ./train_gpt2fp32cu -b 4 -t 512 -v 1000 -s 1000
+```text
+[xray][mem] process start      ...
+[xray][mem] after model load   ...
+[xray][cold] forward    gpu=... wall=... mem_delta=...
+[xray][mem] after first forward ...
+[xray][cold] backward   gpu=... wall=... mem_delta=...
+[xray][cold] adamw      gpu=... wall=... mem_delta=...
 ```
 
-The minimum accepted interval is 50 ms. Sampling itself has overhead, so this tool should not be treated as a replacement for Nsight when precise kernel-level profiling is required.
+Then it reports steady-state phase means and their share of measured GPU time.
 
-## Scope
+## Important interpretation rule
 
-This first stage observes the process from the outside and parses data the executable already exposes. It intentionally does **not** yet instrument individual forward, backward, optimizer, or CUDA-kernel phases.
+This is a **discovery probe**, not a throughput benchmark. Phase boundaries use synchronization so their timings are individually attributable; that intentionally perturbs launch overlap and CPU scheduling. Use the generated Nsight Systems report for the least-distorted kernel timeline.
 
-Those internal measurements should be added only after this external baseline is stable, so that the cost and perturbation of instrumentation can be measured rather than assumed away.
+If a result merely confirms something already explicit in the source or normal log, it is not the interesting result. The useful output is whatever exposes behavior we could not confidently know before measuring it.
