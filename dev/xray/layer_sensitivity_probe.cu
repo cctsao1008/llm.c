@@ -156,7 +156,11 @@ static void gpt2_forward_one_branch_tf32(GPT2* model, int* inputs, int* targets,
     }
 }
 
+#ifdef XRAY_LAYER_SENSITIVITY_EMBEDDED
+int xray_layer_sensitivity_embedded_main(int argc, char** argv) {
+#else
 int main(int argc, char** argv) {
+#endif
     int B = argc > 1 ? atoi(argv[1]) : 4;
     int T = argc > 2 ? atoi(argv[2]) : 512;
     if (B <= 0 || T <= 0) {
