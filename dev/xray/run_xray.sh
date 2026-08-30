@@ -37,6 +37,13 @@ printf '[xray] building complete training-step A/B probe for sm_%s\n' "$CC"
   -lcublas -lcublasLt \
   -o xray_train_step_ab_probe
 
+printf '[xray] building layer divergence probe for sm_%s\n' "$CC"
+"$NVCC" --threads=0 --use_fast_math -std=c++17 -O3 \
+  --generate-code "arch=compute_${CC},code=sm_${CC}" \
+  -I. dev/xray/layer_divergence_probe.cu \
+  -lcublas -lcublasLt \
+  -o xray_layer_divergence_probe
+
 printf '[xray] direct runtime probe: B=%s T=%s steps=%s\n' "$B" "$T" "$STEPS"
 ./xray_runtime_probe "$B" "$T" "$STEPS"
 
@@ -48,6 +55,9 @@ printf '\n[xray] whole-forward discovery: replace every forward GEMM, keep the r
 
 printf '\n[xray] complete training-step discovery: forward differs; backward+AdamW stay identical\n'
 ./xray_train_step_ab_probe "$B" "$T" 8
+
+printf '\n[xray] layer-wise numerical divergence discovery\n'
+./xray_layer_divergence_probe "$B" "$T"
 
 if command -v nsys >/dev/null 2>&1; then
   printf '\n[xray] capturing CUDA/cuBLAS/NVTX timeline with Nsight Systems\n'
