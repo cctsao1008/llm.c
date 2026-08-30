@@ -1,6 +1,9 @@
+#pragma push_macro("main")
+#undef main
 #define main xray_forward_ab_embedded_main
 #include "forward_ab_probe.cu"
 #undef main
+#pragma pop_macro("main")
 
 #include <algorithm>
 #include <cmath>
