@@ -23,11 +23,21 @@ printf '[xray] building matmul probe for sm_%s\n' "$CC"
   -lcublas -lcublasLt \
   -o xray_matmul_probe
 
+printf '[xray] building whole-forward A/B probe for sm_%s\n' "$CC"
+"$NVCC" --threads=0 --use_fast_math -std=c++17 -O3 \
+  --generate-code "arch=compute_${CC},code=sm_${CC}" \
+  -I. dev/xray/forward_ab_probe.cu \
+  -lcublas -lcublasLt \
+  -o xray_forward_ab_probe
+
 printf '[xray] direct runtime probe: B=%s T=%s steps=%s\n' "$B" "$T" "$STEPS"
 ./xray_runtime_probe "$B" "$T" "$STEPS"
 
 printf '\n[xray] forward GEMM discovery: custom kernel vs cuBLAS TF32/FP32\n'
 ./xray_matmul_probe "$B" "$T"
+
+printf '\n[xray] whole-forward discovery: replace every forward GEMM, keep the rest identical\n'
+./xray_forward_ab_probe "$B" "$T" 8
 
 if command -v nsys >/dev/null 2>&1; then
   printf '\n[xray] capturing CUDA/cuBLAS/NVTX timeline with Nsight Systems\n'
