@@ -30,6 +30,13 @@ printf '[xray] building whole-forward A/B probe for sm_%s\n' "$CC"
   -lcublas -lcublasLt \
   -o xray_forward_ab_probe
 
+printf '[xray] building complete training-step A/B probe for sm_%s\n' "$CC"
+"$NVCC" --threads=0 --use_fast_math -std=c++17 -O3 \
+  --generate-code "arch=compute_${CC},code=sm_${CC}" \
+  -I. dev/xray/train_step_ab_probe.cu \
+  -lcublas -lcublasLt \
+  -o xray_train_step_ab_probe
+
 printf '[xray] direct runtime probe: B=%s T=%s steps=%s\n' "$B" "$T" "$STEPS"
 ./xray_runtime_probe "$B" "$T" "$STEPS"
 
@@ -38,6 +45,9 @@ printf '\n[xray] forward GEMM discovery: custom kernel vs cuBLAS TF32/FP32\n'
 
 printf '\n[xray] whole-forward discovery: replace every forward GEMM, keep the rest identical\n'
 ./xray_forward_ab_probe "$B" "$T" 8
+
+printf '\n[xray] complete training-step discovery: forward differs; backward+AdamW stay identical\n'
+./xray_train_step_ab_probe "$B" "$T" 8
 
 if command -v nsys >/dev/null 2>&1; then
   printf '\n[xray] capturing CUDA/cuBLAS/NVTX timeline with Nsight Systems\n'
@@ -48,9 +58,6 @@ if command -v nsys >/dev/null 2>&1; then
     -o "$OUT" \
     ./xray_runtime_probe "$B" "$T" "$STEPS"
 
-  # nsys stats caches an SQLite export next to the .nsys-rep. Because this
-  # script intentionally overwrites the same report name across experiments,
-  # always regenerate the export or later reports can fail/stale-read it.
   printf '\n[xray] CUDA kernel summary\n'
   nsys stats --force-export=true --report cuda_gpu_kern_sum "${OUT}.nsys-rep" || true
 
