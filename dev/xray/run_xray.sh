@@ -51,6 +51,13 @@ printf '[xray] building layer causal sensitivity probe for sm_%s\n' "$CC"
   -lcublas -lcublasLt \
   -o xray_layer_sensitivity_probe
 
+printf '[xray] building per-GEMM causal sensitivity probe for sm_%s\n' "$CC"
+"$NVCC" --threads=0 --use_fast_math -std=c++17 -O3 \
+  --generate-code "arch=compute_${CC},code=sm_${CC}" \
+  -I. dev/xray/component_sensitivity_probe.cu \
+  -lcublas -lcublasLt \
+  -o xray_component_sensitivity_probe
+
 printf '[xray] direct runtime probe: B=%s T=%s steps=%s\n' "$B" "$T" "$STEPS"
 ./xray_runtime_probe "$B" "$T" "$STEPS"
 
@@ -68,6 +75,9 @@ printf '\n[xray] layer-wise numerical divergence discovery\n'
 
 printf '\n[xray] causal layer/branch sensitivity discovery\n'
 ./xray_layer_sensitivity_probe "$B" "$T"
+
+printf '\n[xray] per-GEMM causal sensitivity discovery\n'
+./xray_component_sensitivity_probe "$B" "$T"
 
 if command -v nsys >/dev/null 2>&1; then
   printf '\n[xray] capturing CUDA/cuBLAS/NVTX timeline with Nsight Systems\n'
