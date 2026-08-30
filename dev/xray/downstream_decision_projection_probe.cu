@@ -10,7 +10,6 @@
 
 enum XrayReplayStage {
     XRAY_STAGE_INPUT = 0,
-    XRAY_STAGE_QKVR,
     XRAY_STAGE_ATTY,
     XRAY_STAGE_ATTPROJ,
     XRAY_STAGE_RESIDUAL2,
@@ -23,7 +22,6 @@ enum XrayReplayStage {
 static const char* xray_replay_stage_name(XrayReplayStage s) {
     switch (s) {
         case XRAY_STAGE_INPUT: return "input";
-        case XRAY_STAGE_QKVR: return "qkvr";
         case XRAY_STAGE_ATTY: return "atty";
         case XRAY_STAGE_ATTPROJ: return "attproj";
         case XRAY_STAGE_RESIDUAL2: return "residual2";
@@ -37,7 +35,6 @@ static const char* xray_replay_stage_name(XrayReplayStage s) {
 
 struct Layer1Snapshot {
     float* input;
-    float* qkvr;
     float* atty;
     float* attproj;
     float* residual2;
@@ -50,7 +47,6 @@ struct Layer1Snapshot {
 static void xray_alloc_snapshot(Layer1Snapshot* s, int B, int T, int C) {
     const size_t BTC = (size_t)B * T * C;
     cudaCheck(cudaMalloc((void**)&s->input,     BTC * sizeof(float)));
-    cudaCheck(cudaMalloc((void**)&s->qkvr,  3 * BTC * sizeof(float)));
     cudaCheck(cudaMalloc((void**)&s->atty,      BTC * sizeof(float)));
     cudaCheck(cudaMalloc((void**)&s->attproj,   BTC * sizeof(float)));
     cudaCheck(cudaMalloc((void**)&s->residual2, BTC * sizeof(float)));
@@ -68,7 +64,6 @@ static void xray_free_snapshot(Layer1Snapshot* s) {
     cudaCheck(cudaFree(s->residual2));
     cudaCheck(cudaFree(s->attproj));
     cudaCheck(cudaFree(s->atty));
-    cudaCheck(cudaFree(s->qkvr));
     cudaCheck(cudaFree(s->input));
 }
 
@@ -79,7 +74,6 @@ static void xray_capture_layer1_snapshot(Layer1Snapshot* s, GPT2* model,
     ActivationTensors a = model->acts;
     const int l = 1;
     cudaCheck(cudaMemcpy(s->input, input, BTC * sizeof(float), cudaMemcpyDeviceToDevice));
-    cudaCheck(cudaMemcpy(s->qkvr, a.qkvr + (size_t)l * 3 * BTC, 3 * BTC * sizeof(float), cudaMemcpyDeviceToDevice));
     cudaCheck(cudaMemcpy(s->atty, a.atty + (size_t)l * BTC, BTC * sizeof(float), cudaMemcpyDeviceToDevice));
     cudaCheck(cudaMemcpy(s->attproj, a.attproj + (size_t)l * BTC, BTC * sizeof(float), cudaMemcpyDeviceToDevice));
     cudaCheck(cudaMemcpy(s->residual2, a.residual2 + (size_t)l * BTC, BTC * sizeof(float), cudaMemcpyDeviceToDevice));
@@ -94,7 +88,6 @@ static float xray_replay_layer1_snapshot(GPT2* model, const Layer1Snapshot* s,
                                          int B, int T, int token,
                                          int winner, int runner) {
     const int C = model->config.channels;
-    const int NH = model->config.num_heads;
     const size_t BTC = (size_t)B * T * C;
     const int l = 1;
     ParameterTensors p = model->params;
@@ -107,9 +100,6 @@ static float xray_replay_layer1_snapshot(GPT2* model, const Layer1Snapshot* s,
     }
 
     float* residual = s->input;
-    float* l_qkvr = a.qkvr + (size_t)l * 3 * BTC;
-    float* l_atty = a.atty + (size_t)l * BTC;
-    float* l_att = a.att + (size_t)l * B * NH * T * T;
     float* l_attproj = a.attproj + (size_t)l * BTC;
     float* l_residual2 = a.residual2 + (size_t)l * BTC;
     float* l_ln2 = a.ln2 + (size_t)l * BTC;
@@ -129,11 +119,13 @@ static float xray_replay_layer1_snapshot(GPT2* model, const Layer1Snapshot* s,
     float* l_fcprojw = p.fcprojw + (size_t)l * C * 4 * C;
     float* l_fcprojb = p.fcprojb + (size_t)l * C;
 
-    if (stage == XRAY_STAGE_QKVR) {
-        attention_forward(l_atty, l_qkvr, l_att, s->qkvr, B, T, C, NH);
-        matmul_forward(l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C);
-        residual_forward(l_residual2, residual, l_attproj, B * T * C);
-    } else if (stage == XRAY_STAGE_ATTY) {
+    // qkvr is intentionally not a replay boundary. In this llm.c path it is
+    // an attention-internal activation/workspace, not the raw QKV input expected
+    // by attention_forward. Reusing it as that input is semantically invalid and
+    // can drive the attention kernel out of bounds. The observational probes have
+    // already established that qkvr direction stays essentially fixed while atty
+    // rotates, so the first valid causal restart boundary we need is atty.
+    if (stage == XRAY_STAGE_ATTY) {
         matmul_forward(l_attproj, s->atty, l_attprojw, l_attprojb, B, T, C, C);
         residual_forward(l_residual2, residual, l_attproj, B * T * C);
     } else if (stage == XRAY_STAGE_ATTPROJ) {
@@ -217,12 +209,12 @@ int main(int argc, char** argv) {
     printf("[xray][decision-projection] token=%d winner=%d runner=%d margin0=%+.9e margin1=%+.9e actual_dm=%+.9e\n",
            token, winner, runner, margin0, margin1, (double)margin1 - margin0);
     printf("[xray][decision-projection] stage_secant=[m(replay x_s(+a))-m(replay x_s(-a))]/(2a); paired skip state is preserved where required\n");
+    printf("[xray][decision-projection] qkvr remains observational-only here; atty is the first valid causal restart boundary after attention\n");
 
     const float alphas[] = {0.35f, 0.36f, 0.37f, 0.38f, 0.39f, 0.40f};
     const XrayReplayStage stages[] = {
-        XRAY_STAGE_INPUT, XRAY_STAGE_QKVR, XRAY_STAGE_ATTY, XRAY_STAGE_ATTPROJ,
-        XRAY_STAGE_RESIDUAL2, XRAY_STAGE_FCH, XRAY_STAGE_GELU,
-        XRAY_STAGE_FCPROJ, XRAY_STAGE_RESIDUAL3
+        XRAY_STAGE_ATTY, XRAY_STAGE_ATTPROJ, XRAY_STAGE_RESIDUAL2,
+        XRAY_STAGE_FCH, XRAY_STAGE_GELU, XRAY_STAGE_FCPROJ, XRAY_STAGE_RESIDUAL3
     };
     const int block = 256;
     const int grid = (int)((state_n + block - 1) / block);
@@ -245,6 +237,9 @@ int main(int argc, char** argv) {
         const double full_secant = ((double)input_plus - input_minus) / (2.0 * alpha);
         printf("[xray][decision-projection-margin] a=%.2f full_secant=%+.9e sign=%+d\n",
                alpha, full_secant, (full_secant > 0.0) - (full_secant < 0.0));
+        printf("[xray][decision-projection-stage] a=%.2f stage=%-9s mp=%+.9e mm=%+.9e secant=%+.9e sign=%+d ratio_to_input=%+.6f\n",
+               alpha, "input", input_plus, input_minus, full_secant,
+               (full_secant > 0.0) - (full_secant < 0.0), 1.0);
 
         for (XrayReplayStage stage : stages) {
             float mp = xray_replay_layer1_snapshot(&model, &plus, stage, B, T, token, winner, runner);
