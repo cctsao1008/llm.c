@@ -75,25 +75,43 @@ static XrayGpuAttentionReplay xray_replay_l02_attention_exact(GPT2* model,
     cudaCheck(cudaMalloc((void**)&d_atty, BTC * sizeof(float)));
     cudaCheck(cudaMemset(d_att, 0, BHTT * sizeof(float)));
 
-    // Exact same subgraph and shapes as llmc/attention.cuh.
-    matmul_cublaslt(d_preatt, k, q, nullptr,
-                    T, T, HS, main_stream,
-                    true, false, B * NH,
-                    T * HS, T * HS, T * T);
+    // Replay the exact attention subgraph used by the FP32 xray substrate
+    // (train_gpt2_fp32.cu): strided-batched cuBLAS QK, kernel5 softmax,
+    // strided-batched cuBLAS PV, then unpermute. Do not mix in the newer
+    // llmc/attention.cuh cublasLt/main_stream API here.
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+    cublasCheck(cublasSgemmStridedBatched(
+        cublas_handle,
+        CUBLAS_OP_T, CUBLAS_OP_N,
+        T, T, HS,
+        &alpha,
+        k, HS, T * HS,
+        q, HS, T * HS,
+        &beta,
+        d_preatt, T, T * T,
+        B * NH));
 
     const int block_size = 256;
     const float scale = 1.0f / sqrtf((float)HS);
-    const int grid_size = CEIL_DIV(B * NH * T * WARP_SIZE, block_size);
-    softmax_forward_kernel5<<<grid_size, block_size, 0, main_stream>>>(
+    const int grid_size = CEIL_DIV(B * NH * T * 32, block_size);
+    softmax_forward_kernel5<<<grid_size, block_size>>>(
         d_att, scale, d_preatt, B * NH, T);
     cudaCheck(cudaGetLastError());
 
-    matmul_cublaslt(d_vaccum, v, d_att, nullptr,
-                    HS, T, T, main_stream,
-                    false, false, B * NH,
-                    T * HS, T * T, T * HS);
+    cublasCheck(cublasSgemmStridedBatched(
+        cublas_handle,
+        CUBLAS_OP_N, CUBLAS_OP_N,
+        HS, T, T,
+        &alpha,
+        v, HS, T * HS,
+        d_att, T, T * T,
+        &beta,
+        d_vaccum, HS, T * HS,
+        B * NH));
+
     const int num_blocks = CEIL_DIV(B * T * C, block_size);
-    unpermute_kernel<<<num_blocks, block_size, 0, main_stream>>>(
+    unpermute_kernel<<<num_blocks, block_size>>>(
         d_vaccum, d_atty, B, T, NH, HS);
     cudaCheck(cudaGetLastError());
     cudaCheck(cudaDeviceSynchronize());
