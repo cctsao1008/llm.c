@@ -24,10 +24,6 @@ static const char* component_name(XrayComponent c) {
     return "?";
 }
 
-// Original forward graph, except exactly one GEMM in exactly one layer is
-// switched from the custom FP32 kernel to cuBLAS TF32. This separates the
-// two GEMMs inside attention and the two GEMMs inside the MLP so we can ask
-// where a small arithmetic perturbation actually acquires causal leverage.
 static void gpt2_forward_one_component_tf32(GPT2* model, int* inputs, int* targets,
                                             int B, int T, int selected_layer,
                                             XrayComponent selected_component) {
@@ -122,7 +118,7 @@ static void gpt2_forward_one_component_tf32(GPT2* model, int* inputs, int* targe
     }
 }
 
-int main(int argc, char** argv) {
+static int xray_component_sensitivity_main(int argc, char** argv) {
     int B = argc > 1 ? atoi(argv[1]) : 4;
     int T = argc > 2 ? atoi(argv[2]) : 512;
     if (B <= 0 || T <= 0) {
@@ -205,3 +201,9 @@ int main(int argc, char** argv) {
     cublasCheck(cublasDestroy(cublas_handle));
     return 0;
 }
+
+#ifndef XRAY_COMPONENT_SENSITIVITY_EMBEDDED
+int main(int argc, char** argv) {
+    return xray_component_sensitivity_main(argc, argv);
+}
+#endif
