@@ -44,8 +44,8 @@ __global__ void xray_top2_rows_kernel(const float* logits,
     __shared__ int sbest_i[XRAY_TOP2_BLOCK];
     __shared__ int ssecond_i[XRAY_TOP2_BLOCK];
 
-    float best = -CUDART_INF_F;
-    float second = -CUDART_INF_F;
+    float best = -FLT_MAX;
+    float second = -FLT_MAX;
     int best_i = INT_MAX;
     int second_i = INT_MAX;
     const float* rowp = logits + (size_t)row * Vp;
