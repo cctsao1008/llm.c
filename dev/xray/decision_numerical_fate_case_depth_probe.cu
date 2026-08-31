@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
     const size_t state_n = (size_t)B * T * C;
     const size_t state_bytes = state_n * sizeof(float);
 
-    // Reference execution defines the baseline decision.  This is the same
+    // Reference execution defines the baseline decision. This is the same
     // batch indexing convention used by numerical_fate_landscape_probe.cu.
     gpt2_forward(&model, loader.inputs, NULL, B, T);
     cudaCheck(cudaDeviceSynchronize());
@@ -164,6 +164,10 @@ int main(int argc, char** argv) {
         int prev_cpu64_pair_sign = 0;
         int last_cpu64_winner = -1;
         double last_cpu64_pair = std::numeric_limits<double>::quiet_NaN();
+        std::vector<int> cpu64_winners;
+        std::vector<int> cpu64_pair_signs;
+        cpu64_winners.reserve(L);
+        cpu64_pair_signs.reserve(L);
 
         const auto family_t0 = std::chrono::steady_clock::now();
         for (int k = 0; k < L; ++k) {
@@ -186,7 +190,7 @@ int main(int argc, char** argv) {
                 xray_stats_from_gpu_logits(replay_logits, ref_winner, alt_winner);
 
             // Same exact checkpoint, but with the remaining model suffix
-            // reevaluated in CPU double.  This is a direct fate evaluation,
+            // reevaluated in CPU double. This is a direct fate evaluation,
             // not a finite-difference attribution.
             const std::vector<float> prefix =
                 xray_copy_state_prefix(checkpoints[k], b, T, P, C);
@@ -216,6 +220,9 @@ int main(int argc, char** argv) {
                 ++cpu64_pair_sign_changes;
             }
 
+            cpu64_winners.push_back(cpu_stats.winner);
+            cpu64_pair_signs.push_back(cpu_pair_sign);
+
             printf("[xray][decision-case-depth-checkpoint] family=%-7s L=%02d gpu_top1=%d gpu_runner=%d gpu_pair=%+.9e cpu64_top1=%d cpu64_runner=%d cpu64_pair=%+.9e cpu64_matches_alt=%d cpu64_is_ref=%d pair_sign=%+d gpu_replay_unequal=%d/%d gpu_replay_max_abs=%.9e\n",
                    family.name, k,
                    gpu_stats.winner, gpu_stats.runner, gpu_stats.pair_margin,
@@ -232,13 +239,46 @@ int main(int argc, char** argv) {
         const double family_ms =
             std::chrono::duration<double, std::milli>(family_t1 - family_t0).count();
 
+        int stable_cpu64_alt_from_layer = -1;
+        if (!cpu64_winners.empty() && cpu64_winners.back() == alt_winner) {
+            stable_cpu64_alt_from_layer = L - 1;
+            while (stable_cpu64_alt_from_layer > 0 &&
+                   cpu64_winners[(size_t)stable_cpu64_alt_from_layer - 1] == alt_winner) {
+                --stable_cpu64_alt_from_layer;
+            }
+        }
+
+        int stable_cpu64_pair_nonpositive_from_layer = -1;
+        if (!cpu64_pair_signs.empty() && cpu64_pair_signs.back() <= 0) {
+            stable_cpu64_pair_nonpositive_from_layer = L - 1;
+            while (stable_cpu64_pair_nonpositive_from_layer > 0 &&
+                   cpu64_pair_signs[(size_t)stable_cpu64_pair_nonpositive_from_layer - 1] <= 0) {
+                --stable_cpu64_pair_nonpositive_from_layer;
+            }
+        }
+
+        int last_cpu64_winner_change_layer = -1;
+        int last_cpu64_pair_sign_change_layer = -1;
+        for (int k = 1; k < (int)cpu64_winners.size(); ++k) {
+            if (cpu64_winners[(size_t)k] != cpu64_winners[(size_t)k - 1]) {
+                last_cpu64_winner_change_layer = k;
+            }
+            if (cpu64_pair_signs[(size_t)k] != cpu64_pair_signs[(size_t)k - 1]) {
+                last_cpu64_pair_sign_change_layer = k;
+            }
+        }
+
         global_replay_exact &= family_replay_exact;
-        printf("[xray][decision-case-depth-family-summary] family=%-7s replay_exact=%d alt=%d alt_is_ref_runner=%d first_cpu64_alt_decision_layer=%d first_cpu64_not_ref_layer=%d first_cpu64_pair_nonpositive_layer=%d cpu64_winner_changes=%d cpu64_pair_sign_changes=%d final_cpu64_top1=%d final_cpu64_pair=%+.9e elapsed_ms=%.3f\n",
+        printf("[xray][decision-case-depth-family-summary] family=%-7s replay_exact=%d alt=%d alt_is_ref_runner=%d first_cpu64_alt_decision_layer=%d stable_cpu64_alt_from_layer=%d last_cpu64_winner_change_layer=%d first_cpu64_not_ref_layer=%d first_cpu64_pair_nonpositive_layer=%d stable_cpu64_pair_nonpositive_from_layer=%d last_cpu64_pair_sign_change_layer=%d cpu64_winner_changes=%d cpu64_pair_sign_changes=%d final_cpu64_top1=%d final_cpu64_pair=%+.9e elapsed_ms=%.3f\n",
                family.name, family_replay_exact, alt_winner,
                alt_winner == ref_runner ? 1 : 0,
                first_cpu64_alt_decision_layer,
+               stable_cpu64_alt_from_layer,
+               last_cpu64_winner_change_layer,
                first_cpu64_not_ref_layer,
                first_cpu64_pair_nonpositive_layer,
+               stable_cpu64_pair_nonpositive_from_layer,
+               last_cpu64_pair_sign_change_layer,
                cpu64_winner_changes, cpu64_pair_sign_changes,
                last_cpu64_winner, last_cpu64_pair, family_ms);
 
@@ -255,7 +295,7 @@ int main(int argc, char** argv) {
            processed, disagreements, global_replay_exact,
            common_alt_winner, first_alt_winner, all_alt_are_ref_runner,
            elapsed_ms);
-    printf("[xray][decision-case-depth-summary] interpretation gate: compare direct CPU64 decision trajectories across perturbation families only after replay_exact=1; convergence/divergence of fate depth is descriptive topology and does not by itself identify an operator-level mechanism\n");
+    printf("[xray][decision-case-depth-summary] interpretation gate: first crossing and stable lock are reported separately; compare direct CPU64 decision trajectories only after replay_exact=1; depth topology does not by itself identify an operator-level mechanism\n");
 
     dataloader_free(&loader);
     gpt2_free(&model);
