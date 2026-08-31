@@ -14,6 +14,7 @@ echo "[xray] building stable-lock stage probe for ${ARCH}"
 nvcc -O3 -std=c++17 -arch=${ARCH} \
   -Xcompiler -fopenmp \
   -I. -I./dev/cuda \
+  -include dev/xray/xray_gpu_logit_compare.h \
   dev/xray/decision_numerical_fate_stable_lock_stage_probe.cu \
   -lcublas -lcublasLt -Xcompiler -lgomp \
   -o "${OUT}"
