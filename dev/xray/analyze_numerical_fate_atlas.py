@@ -44,6 +44,14 @@ def median(values):
     return x[n // 2] if n & 1 else 0.5 * (x[n // 2 - 1] + x[n // 2])
 
 
+def source_branch(family):
+    if family in {"qkv", "attproj"}:
+        return "attention-branch"
+    if family in {"fc", "fcproj"}:
+        return "mlp-branch"
+    return "other"
+
+
 def read_rows(path):
     with open(path, newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
@@ -137,6 +145,41 @@ def main():
         )
     emit("")
 
+    emit("## Flip topology by coarse source branch")
+    emit("")
+    emit("This is a descriptive grouping of the L00 injection site only: `qkv`/`attproj` are grouped as the attention branch and `fc`/`fcproj` as the MLP branch. It is not a mechanism label.")
+    emit("")
+    emit("| source branch | n | topology classes | median sign changes | median stable competitor layer | median min |pair| |")
+    emit("|---|---:|---|---:|---:|---:|")
+    branches = ["attention-branch", "mlp-branch", "other"]
+    for branch in branches:
+        br = [r for r in flips if source_branch(r["family"]) == branch]
+        if not br:
+            continue
+        counts = Counter(r["pair_topology"] for r in br)
+        topo_text = "; ".join(f"`{k}`×{v}" for k, v in counts.most_common()) or "-"
+        emit(
+            f"| {branch} | {len(br)} | {topo_text} | "
+            f"{fmt(median([as_float(r, 'pair_sign_changes') for r in br]))} | "
+            f"{fmt(median([as_float(r, 'stable_competitor_from_layer') for r in br]))} | "
+            f"{fmt(median([as_float(r, 'min_abs_pair') for r in br]))} |"
+        )
+    emit("")
+
+    emit("### Source-branch × topology counts")
+    emit("")
+    topologies = [t for t, _ in Counter(r["pair_topology"] for r in flips).most_common()]
+    if topologies:
+        emit("| source branch | " + " | ".join(f"`{t}`" for t in topologies) + " |")
+        emit("|---|" + "---:|" * len(topologies))
+        for branch in branches:
+            br = [r for r in flips if source_branch(r["family"]) == branch]
+            if not br:
+                continue
+            counts = Counter(r["pair_topology"] for r in br)
+            emit("| " + branch + " | " + " | ".join(str(counts[t]) for t in topologies) + " |")
+        emit("")
+
     emit("## Matched flip/control comparison")
     emit("")
     emit("A control boundary contact means its CPU64 pair topology reaches `0` or `-` at an intermediate checkpoint even though the perturbed GPU execution did not finally flip.")
@@ -186,7 +229,7 @@ def main():
 
     emit("## Interpretation gate")
     emit("")
-    emit("This report classifies depth-wise fate trajectories and compares them with matched non-flip controls. Repeated topology is evidence of recurring decision dynamics only after validity passes and replication grows beyond isolated cases. It does not identify QK, attention, MLP, or any other operator as a mechanism. Large adjacent pair changes are not causal operator attributions.")
+    emit("This report classifies depth-wise fate trajectories and compares them with matched non-flip controls. Repeated topology is evidence of recurring decision dynamics only after validity passes and replication grows beyond isolated cases. The source-branch grouping is only a descriptive grouping of where the numerical perturbation was injected; an association between source branch and topology would be a hypothesis to replicate, not an operator-level mechanism claim. This report does not identify QK, attention, MLP, or any other operator as a mechanism. Large adjacent pair changes are not causal operator attributions.")
 
     text = "\n".join(lines) + "\n"
     print(text, end="")
